@@ -1,0 +1,23 @@
+# Credentials — never commit
+.env
+
+# Telegram session files
+*.session
+*.session-journal
+
+# SQLite database
+*.db
+
+# Logs
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+env/
+.venv/

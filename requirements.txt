@@ -1,0 +1,6 @@
+feedparser>=6.0.11
+google-generativeai>=0.8.3
+telethon>=1.36.0
+rapidfuzz>=3.11.0
+python-dotenv>=1.0.1
+requests>=2.32.3
