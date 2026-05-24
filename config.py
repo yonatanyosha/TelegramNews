@@ -14,8 +14,11 @@ WATCH_GROUPS = [
 ]
 
 # ── Topics ────────────────────────────────────────────────────────────────────
-# bias_score:  -3=far left, -2=left, -1=center-left, 0=center, +1=center-right, +2=right, +3=far right
-# max_articles: hard cap on how many articles this topic may contribute per run
+# bias_score:      -3=far left … 0=center … +3=far right
+# max_articles:    base cap per run (scaled by topic_weight from feedback)
+# min_significance: minimum Gemini global_significance score to keep an article.
+#                   Overrides the global RATE_LIMITS["min_significance_score"].
+#                   Set to 1 for niche/personal topics (MediWound, Kanye, Messi).
 #
 # Target proportions (20 total per run):
 #   Geopolitics 60% → 12  |  Israel 15% → 3  |  Finance 15% → 3  |  Other 10% → 2
@@ -25,26 +28,27 @@ TOPICS = {
         "name": "גיאופוליטיקה",
         "emoji": "🌍",
         "priority": 1,
-        "max_articles": 12,   # 60%
+        "max_articles": 12,       # 60%
+        "min_significance": 5,    # global news — keep threshold high
         "sources": [
             # --- Center / Wire services ---
-            {"name": "Reuters",           "url": "https://news.google.com/rss/search?q=site:reuters.com+world&hl=en-US&gl=US&ceid=US:en",              "bias": "CENTER", "bias_score": 0},
-            {"name": "AP News",           "url": "https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en",                    "bias": "CENTER", "bias_score": 0},
+            {"name": "Reuters",              "url": "https://news.google.com/rss/search?q=site:reuters.com+world&hl=en-US&gl=US&ceid=US:en",                  "bias": "CENTER", "bias_score":  0},
+            {"name": "AP News",              "url": "https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en",                        "bias": "CENTER", "bias_score":  0},
             # --- Left-leaning ---
-            {"name": "BBC",               "url": "http://feeds.bbci.co.uk/news/world/rss.xml",                                                          "bias": "LEFT",   "bias_score": -1},
-            {"name": "Al Jazeera",        "url": "http://www.aljazeera.com/xml/rss/all.xml",                                                            "bias": "LEFT",   "bias_score": -2},
-            {"name": "The Guardian",      "url": "https://www.theguardian.com/world/rss",                                                               "bias": "LEFT",   "bias_score": -2},
+            {"name": "BBC",                  "url": "http://feeds.bbci.co.uk/news/world/rss.xml",                                                              "bias": "LEFT",   "bias_score": -1},
+            {"name": "Al Jazeera",           "url": "http://www.aljazeera.com/xml/rss/all.xml",                                                                "bias": "LEFT",   "bias_score": -2},
+            {"name": "The Guardian",         "url": "https://www.theguardian.com/world/rss",                                                                   "bias": "LEFT",   "bias_score": -2},
             # --- Right-leaning ---
-            {"name": "Fox News",          "url": "https://moxie.foxnews.com/google-publisher/world.xml",                                                "bias": "RIGHT",  "bias_score": 2},
-            {"name": "Breitbart",         "url": "https://feeds.feedburner.com/breitbart",                                                              "bias": "RIGHT",  "bias_score": 3},
+            {"name": "Fox News",             "url": "https://moxie.foxnews.com/google-publisher/world.xml",                                                    "bias": "RIGHT",  "bias_score":  2},
+            {"name": "Breitbart",            "url": "https://feeds.feedburner.com/breitbart",                                                                  "bias": "RIGHT",  "bias_score":  3},
             # --- International / regional diversity ---
-            {"name": "Deutsche Welle",    "url": "https://rss.dw.com/rdf/rss-en-all",                                                                  "bias": "CENTER", "bias_score": -1},
-            {"name": "France 24",         "url": "https://www.france24.com/en/rss",                                                                    "bias": "CENTER", "bias_score": 0},
-            {"name": "NHK World",         "url": "https://www3.nhk.or.jp/nhkworld/en/news/feeds/rss.xml",                                              "bias": "CENTER", "bias_score": 0},
-            {"name": "Asia (Google News)","url": "https://news.google.com/rss/search?q=asia+india+china+south+korea+world+news&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score": 0},
-            {"name": "Africa (Google News)", "url": "https://news.google.com/rss/search?q=africa+breaking+world+news&hl=en-US&gl=US&ceid=US:en",        "bias": "CENTER", "bias_score": 0},
-            {"name": "LatAm (Google News)","url": "https://news.google.com/rss/search?q=latin+america+south+america+world+news&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score": 0},
-            {"name": "World Breaking",    "url": "https://news.google.com/rss/search?q=unprecedented+breaking+world+crisis&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score": 0},
+            {"name": "Deutsche Welle",       "url": "https://rss.dw.com/rdf/rss-en-all",                                                                      "bias": "CENTER", "bias_score": -1},
+            {"name": "France 24",            "url": "https://www.france24.com/en/rss",                                                                        "bias": "CENTER", "bias_score":  0},
+            {"name": "NHK World",            "url": "https://www3.nhk.or.jp/nhkworld/en/news/feeds/rss.xml",                                                  "bias": "CENTER", "bias_score":  0},
+            {"name": "Asia (Google News)",   "url": "https://news.google.com/rss/search?q=asia+india+china+south+korea+world+news&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score":  0},
+            {"name": "Africa (Google News)", "url": "https://news.google.com/rss/search?q=africa+breaking+world+news&hl=en-US&gl=US&ceid=US:en",              "bias": "CENTER", "bias_score":  0},
+            {"name": "LatAm (Google News)",  "url": "https://news.google.com/rss/search?q=latin+america+south+america+world+news&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score":  0},
+            {"name": "World Breaking",       "url": "https://news.google.com/rss/search?q=unprecedented+breaking+world+crisis&hl=en-US&gl=US&ceid=US:en",    "bias": "CENTER", "bias_score":  0},
         ],
     },
 
@@ -52,14 +56,15 @@ TOPICS = {
         "name": "פוליטיקה ישראלית",
         "emoji": "🇮🇱",
         "priority": 2,
-        "max_articles": 3,    # 15%
+        "max_articles": 3,        # 15%
+        "min_significance": 3,    # Israeli local politics is relevant even if not globally significant
         "sources": [
-            {"name": "Times of Israel",   "url": "https://www.timesofisrael.com/feed/",                                                                 "bias": "CENTER", "bias_score": 0},
-            {"name": "Jerusalem Post",    "url": "https://www.jpost.com/rss/rssfeedsfrontpage.aspx",                                                    "bias": "RIGHT",  "bias_score": 1},
-            {"name": "Arutz Sheva",       "url": "https://news.google.com/rss/search?q=site:israelnationalnews.com&hl=en-US&gl=US&ceid=US:en",          "bias": "RIGHT",  "bias_score": 3},
-            {"name": "Haaretz",           "url": "https://news.google.com/rss/search?q=site:haaretz.com&hl=en-US&gl=US&ceid=US:en",                    "bias": "LEFT",   "bias_score": -2},
-            {"name": "i24 News",          "url": "https://news.google.com/rss/search?q=site:i24news.tv+israel&hl=en-US&gl=US&ceid=US:en",              "bias": "CENTER", "bias_score": 0},
-            {"name": "Channel 14 (Kan14)","url": "https://news.google.com/rss/search?q=site:14tv.co.il&hl=he&gl=IL&ceid=IL:he",                        "bias": "RIGHT",  "bias_score": 3},
+            {"name": "Times of Israel",    "url": "https://www.timesofisrael.com/feed/",                                                               "bias": "CENTER", "bias_score":  0},
+            {"name": "Jerusalem Post",     "url": "https://www.jpost.com/rss/rssfeedsfrontpage.aspx",                                                  "bias": "RIGHT",  "bias_score":  1},
+            {"name": "Arutz Sheva",        "url": "https://news.google.com/rss/search?q=site:israelnationalnews.com&hl=en-US&gl=US&ceid=US:en",        "bias": "RIGHT",  "bias_score":  3},
+            {"name": "Haaretz",            "url": "https://news.google.com/rss/search?q=site:haaretz.com&hl=en-US&gl=US&ceid=US:en",                  "bias": "LEFT",   "bias_score": -2},
+            {"name": "i24 News",           "url": "https://news.google.com/rss/search?q=site:i24news.tv+israel&hl=en-US&gl=US&ceid=US:en",            "bias": "CENTER", "bias_score":  0},
+            {"name": "Channel 14 (Kan14)", "url": "https://news.google.com/rss/search?q=site:14tv.co.il&hl=he&gl=IL&ceid=IL:he",                      "bias": "RIGHT",  "bias_score":  3},
         ],
     },
 
@@ -67,13 +72,14 @@ TOPICS = {
         "name": "שוקי הון",
         "emoji": "📈",
         "priority": 3,
-        "max_articles": 2,    # 10% (shared financial quota with crypto)
+        "max_articles": 2,        # 10%
+        "min_significance": 4,    # financial news should be at least somewhat notable
         "sources": [
-            {"name": "Reuters Finance",   "url": "https://news.google.com/rss/search?q=site:reuters.com+markets+finance&hl=en-US&gl=US&ceid=US:en",    "bias": "CENTER", "bias_score": 0},
-            {"name": "Yahoo Finance",     "url": "https://finance.yahoo.com/news/rssindex",                                                             "bias": "CENTER", "bias_score": 0},
-            {"name": "CNBC",             "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",                                               "bias": "CENTER", "bias_score": -1},
-            {"name": "Zero Hedge",        "url": "https://feeds.feedburner.com/zerohedge/feed",                                                         "bias": "RIGHT",  "bias_score": 2},
-            {"name": "MarketWatch",       "url": "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",                                   "bias": "CENTER", "bias_score": 0},
+            {"name": "Reuters Finance", "url": "https://news.google.com/rss/search?q=site:reuters.com+markets+finance&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score":  0},
+            {"name": "Yahoo Finance",   "url": "https://finance.yahoo.com/news/rssindex",                                                         "bias": "CENTER", "bias_score":  0},
+            {"name": "CNBC",            "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",                                            "bias": "CENTER", "bias_score": -1},
+            {"name": "Zero Hedge",      "url": "https://feeds.feedburner.com/zerohedge/feed",                                                     "bias": "RIGHT",  "bias_score":  2},
+            {"name": "MarketWatch",     "url": "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",                               "bias": "CENTER", "bias_score":  0},
         ],
     },
 
@@ -81,11 +87,12 @@ TOPICS = {
         "name": "קריפטו",
         "emoji": "₿",
         "priority": 4,
-        "max_articles": 1,    # 5%
+        "max_articles": 1,
+        "min_significance": 2,    # any notable crypto news is relevant
         "sources": [
-            {"name": "CoinDesk",          "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",                                                     "bias": "CENTER", "bias_score": 0},
-            {"name": "CoinTelegraph",     "url": "https://cointelegraph.com/rss",                                                                       "bias": "CENTER", "bias_score": 0},
-            {"name": "Bitcoin Magazine",  "url": "https://bitcoinmagazine.com/.rss/full/",                                                              "bias": "RIGHT",  "bias_score": 1},
+            {"name": "CoinDesk",        "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",  "bias": "CENTER", "bias_score": 0},
+            {"name": "CoinTelegraph",   "url": "https://cointelegraph.com/rss",                    "bias": "CENTER", "bias_score": 0},
+            {"name": "Bitcoin Magazine","url": "https://bitcoinmagazine.com/.rss/full/",            "bias": "RIGHT",  "bias_score": 1},
         ],
     },
 
@@ -93,10 +100,11 @@ TOPICS = {
         "name": "MediWound",
         "emoji": "💊",
         "priority": 5,
-        "max_articles": 1,    # ~5% of other
+        "max_articles": 1,
+        "min_significance": 1,    # always show — niche topic, any news matters
         "sources": [
-            {"name": "Google News",       "url": "https://news.google.com/rss/search?q=MediWound&hl=en-US&gl=US&ceid=US:en",                           "bias": "CENTER", "bias_score": 0},
-            {"name": "Yahoo MDWD",        "url": "https://finance.yahoo.com/rss/headline?s=MDWD",                                                       "bias": "CENTER", "bias_score": 0},
+            {"name": "Google News", "url": "https://news.google.com/rss/search?q=MediWound&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score": 0},
+            {"name": "Yahoo MDWD",  "url": "https://finance.yahoo.com/rss/headline?s=MDWD",                             "bias": "CENTER", "bias_score": 0},
         ],
     },
 
@@ -105,8 +113,9 @@ TOPICS = {
         "emoji": "🎤",
         "priority": 6,
         "max_articles": 1,
+        "min_significance": 1,    # entertainment — no significance filter
         "sources": [
-            {"name": "Google News",       "url": "https://news.google.com/rss/search?q=Kanye+West&hl=en-US&gl=US&ceid=US:en",                          "bias": "CENTER", "bias_score": 0},
+            {"name": "Google News", "url": "https://news.google.com/rss/search?q=Kanye+West&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score": 0},
         ],
     },
 
@@ -115,8 +124,9 @@ TOPICS = {
         "emoji": "⚽",
         "priority": 7,
         "max_articles": 1,
+        "min_significance": 1,    # sports — no significance filter
         "sources": [
-            {"name": "Google News",       "url": "https://news.google.com/rss/search?q=Lionel+Messi&hl=en-US&gl=US&ceid=US:en",                       "bias": "CENTER", "bias_score": 0},
+            {"name": "Google News", "url": "https://news.google.com/rss/search?q=Lionel+Messi&hl=en-US&gl=US&ceid=US:en", "bias": "CENTER", "bias_score": 0},
         ],
     },
 
@@ -124,23 +134,33 @@ TOPICS = {
         "name": "חדשות טובות",
         "emoji": "🌟",
         "priority": 8,
-        "max_articles": 2,    # guarantee 2 positive articles
+        "max_articles": 2,
+        "min_significance": 2,    # should be notable, but not necessarily global
         "sources": [
-            {"name": "Positive News",     "url": "https://www.positive.news/feed/",                                                                    "bias": "CENTER", "bias_score": 0},
-            {"name": "Good News Network", "url": "https://www.goodnewsnetwork.org/feed/",                                                               "bias": "CENTER", "bias_score": 0},
-            {"name": "Upworthy",          "url": "https://www.upworthy.com/feed",                                                                       "bias": "LEFT",   "bias_score": -1},
+            {"name": "Positive News",     "url": "https://www.positive.news/feed/",          "bias": "CENTER", "bias_score":  0},
+            {"name": "Good News Network", "url": "https://www.goodnewsnetwork.org/feed/",    "bias": "CENTER", "bias_score":  0},
+            {"name": "Upworthy",          "url": "https://www.upworthy.com/feed",            "bias": "LEFT",   "bias_score": -1},
         ],
     },
 }
 
+# ── Cross-topic cross-matching ─────────────────────────────────────────────────
+# Pairs of topic keys that should be cross-matched across bucket boundaries.
+# e.g. BBC (geopolitics) vs Arutz Sheva (israel) covering the same Gaza story.
+# Add more pairs here without touching code.
+CROSS_TOPIC_PAIRS = [
+    ("geopolitics", "israel"),
+]
+
 # ── Rate limits ───────────────────────────────────────────────────────────────
 RATE_LIMITS = {
-    "max_per_run": 20,               # Hard cap: total articles sent per run
-    "dedup_window_days": 7,          # Don't re-send articles seen this week
-    "headline_sim_threshold": 75,    # % similarity → duplicate headline
-    "cross_match_threshold": 65,     # % similarity → same story (for cross-match)
-    "delay_between_messages": 2,     # Seconds between Telegram sends
-    "min_significance_score": 5,     # Skip articles with global_significance < this
+    "max_per_run": 20,              # Hard cap: total articles sent per run
+    "dedup_window_days": 7,         # Don't re-send articles seen this week
+    "headline_sim_threshold": 75,   # % similarity → duplicate headline
+    "cross_match_threshold": 65,    # % similarity → same story (for cross-match)
+    "delay_between_messages": 2,    # Seconds between Telegram sends
+    "min_significance_score": 5,    # Global fallback — overridden per-topic above
+    "telethon_cache_minutes": 60,   # How long to reuse the group-scan URL cache
 }
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -150,6 +170,7 @@ SCHEDULE = {
     "active_hour_end": 23,
 }
 
-# ── Gemini model ──────────────────────────────────────────────────────────────
-GEMINI_MODEL = "gemini-flash-lite-latest"
+# ── Gemini models ─────────────────────────────────────────────────────────────
+GEMINI_MODEL          = "gemini-2.5-flash"       # Primary
+GEMINI_FALLBACK_MODEL = "gemini-2.0-flash-lite"  # Used when primary quota is exhausted
 GEMINI_MAX_INPUT_CHARS = 2000

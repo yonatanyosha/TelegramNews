@@ -8,6 +8,7 @@ Usage:
 
 import asyncio
 import logging
+import logging.handlers
 import sys
 from datetime import datetime
 from rapidfuzz import fuzz
@@ -18,17 +19,24 @@ import fetcher
 import processor
 import reader
 import sender
-from config import RATE_LIMITS, SCHEDULE, TOPICS
+from config import CROSS_TOPIC_PAIRS, RATE_LIMITS, SCHEDULE, TOPICS
 
-# ── Logging setup ─────────────────────────────────────────────────────────────
+# ── Logging setup — rotating file, never fills the disk ───────────────────────
 import pathlib
 pathlib.Path("logs").mkdir(exist_ok=True)
+
+_file_handler = logging.handlers.RotatingFileHandler(
+    "logs/bot.log",
+    maxBytes=2_000_000,   # 2 MB per file
+    backupCount=5,        # keep 5 rolling files (10 MB total)
+    encoding="utf-8",
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler("logs/bot.log", encoding="utf-8"),
+        _file_handler,
         logging.StreamHandler(sys.stdout),
     ],
 )
@@ -42,13 +50,38 @@ def _is_active_hour() -> bool:
     return SCHEDULE["active_hour_start"] <= hour < SCHEDULE["active_hour_end"]
 
 
+# ── Topic weight helpers ──────────────────────────────────────────────────────
+
+def _topic_weight(topic_key: str) -> float:
+    """Return the current feedback-adjusted weight for a topic (default 1.0)."""
+    return database.get_topic_weight(topic_key)
+
+
+def _weighted_cap(topic_key: str, topic_cfg: dict) -> int:
+    """
+    Scale max_articles by the topic's feedback weight.
+    Weight 1.5 → 50% more slots; weight 0.5 → half the slots. Always >= 1.
+    """
+    base   = topic_cfg.get("max_articles", 5)
+    weight = _topic_weight(topic_key)
+    return max(1, round(base * weight))
+
+
 # ── Article priority sort ─────────────────────────────────────────────────────
 
 def _priority(result: dict) -> tuple:
-    """Sort key: cross-matches first, then by global significance (desc), then topic priority."""
-    is_cross = 0 if result.get("is_cross") else 1
-    significance = -result.get("global_significance", 5)   # negate: higher = better
-    topic_priority = TOPICS.get(result.get("topic", ""), {}).get("priority", 99)
+    """
+    Sort key (ascending = higher priority):
+      1. Cross-matches first
+      2. Higher global significance first
+      3. Topic priority adjusted by feedback weight (liked topics rank higher)
+    """
+    topic  = result.get("topic", "")
+    weight = _topic_weight(topic)
+    is_cross       = 0 if result.get("is_cross") else 1
+    significance   = -result.get("global_significance", 5)
+    # Divide by weight so higher weight → lower number → better rank
+    topic_priority = TOPICS.get(topic, {}).get("priority", 99) / max(0.1, weight)
     return (is_cross, significance, topic_priority)
 
 
@@ -56,11 +89,12 @@ def _priority(result: dict) -> tuple:
 
 def _dedup_within_cycle(results: list[dict]) -> list[dict]:
     """Remove near-duplicate articles that slipped through per-topic dedup."""
-    threshold = RATE_LIMITS["headline_sim_threshold"]
+    threshold   = RATE_LIMITS["headline_sim_threshold"]
     seen_titles: list[str] = []
-    final: list[dict] = []
+    final:       list[dict] = []
+
     for r in results:
-        title = r.get("story_title") or r.get("title", "")
+        title  = r.get("story_title") or r.get("title", "")
         is_dup = any(
             fuzz.token_sort_ratio(title.lower(), seen.lower()) >= threshold
             for seen in seen_titles
@@ -70,6 +104,7 @@ def _dedup_within_cycle(results: list[dict]) -> list[dict]:
             seen_titles.append(title)
         else:
             logger.debug("SKIP (cycle dedup): %s", title[:60])
+
     if len(final) < len(results):
         logger.info("Cycle dedup: removed %d cross-topic duplicates", len(results) - len(final))
     return final
@@ -81,16 +116,25 @@ async def run_cycle():
     """One full fetch → process → send cycle."""
     logger.info("=== Starting news cycle ===")
 
+    # Reset to primary Gemini model at cycle start
+    processor.reset_model_state()
+
     seen_in_groups = await reader.get_seen_urls_from_groups(hours=48)
     all_by_topic   = fetcher.fetch_all()
 
-    results: list[dict] = []
-    topic_counts: dict[str, int] = {}
+    results:              list[dict]        = []
+    topic_counts:         dict[str, int]    = {}
+    leftover_singles_raw: dict[str, list[dict]] = {}  # raw singles per topic for cross-topic pass
 
+    # ── Per-topic processing ──────────────────────────────────────────────────
+    quota_hit = False
     for topic_key, articles in all_by_topic.items():
-        topic_cfg = TOPICS.get(topic_key, {})
-        # Per-topic quota from config (replaces the old global max_per_topic)
-        cap = topic_cfg.get("max_articles", 5)
+        if quota_hit:
+            break
+
+        topic_cfg     = TOPICS.get(topic_key, {})
+        cap           = _weighted_cap(topic_key, topic_cfg)
+        sig_threshold = topic_cfg.get("min_significance", RATE_LIMITS.get("min_significance_score", 5))
 
         new_articles = deduplicator.filter_new(articles, seen_in_groups)
         if not new_articles:
@@ -98,54 +142,74 @@ async def run_cycle():
 
         pairs, singles = deduplicator.cross_match(new_articles)
 
-        # Apply cap BEFORE Gemini to save quota (each pair = 2 slots)
         pair_slots = cap // 2
         pairs   = pairs[:pair_slots]
         singles = singles[:cap - len(pairs) * 2]
 
+        # Save raw singles for the cross-topic pass (before Gemini processes them)
+        leftover_singles_raw[topic_key] = singles
+
         topic_results: list[dict] = []
 
-        for pair in pairs:
-            result = processor.process_cross_match(pair)
-            if result:
-                topic_results.append(result)
+        try:
+            for pair in pairs:
+                result = processor.process_cross_match(pair)
+                if result:
+                    topic_results.append(result)
 
-        for article in singles:
-            result = processor.process_single(article)
-            if result:
-                # Filter articles with low global significance (US-centric local news)
-                if result.get("global_significance", 5) < RATE_LIMITS.get("min_significance_score", 4):
-                    logger.info(
-                        "SKIP (low significance %d): %s",
-                        result["global_significance"], article["title"][:60],
-                    )
-                    continue
-                topic_results.append(result)
+            for article in singles:
+                result = processor.process_single(article)
+                if result:
+                    if result.get("global_significance", 5) < sig_threshold:
+                        logger.info(
+                            "SKIP (low significance %d, threshold %d): %s",
+                            result["global_significance"], sig_threshold,
+                            article["title"][:60],
+                        )
+                        continue
+                    topic_results.append(result)
+
+        except processor.QuotaExhaustedError:
+            logger.error("Quota exhausted mid-cycle — sending alert and stopping further Gemini calls.")
+            sender.send_message(
+                "⚠️ <b>מכסת ה-AI אוזלה</b>\n\n"
+                f"עיבדתי {len(results)} ידיעות לפני שהמכסה נגמרה. "
+                "הידיעות שעובדו נשלחות עכשיו; השאר ידולגו עד המחזור הבא."
+            )
+            quota_hit = True
 
         topic_counts[topic_key] = len(topic_results)
         results.extend(topic_results)
+
+    # ── Cross-topic cross-matching (e.g. geopolitics ↔ israel) ───────────────
+    if not quota_hit:
+        cross_topic_pairs = deduplicator.cross_match_topics(leftover_singles_raw, CROSS_TOPIC_PAIRS)
+        for pair in cross_topic_pairs:
+            try:
+                result = processor.process_cross_match(pair)
+                if result:
+                    results.append(result)
+            except processor.QuotaExhaustedError:
+                logger.warning("Quota exhausted during cross-topic pass — skipping remainder.")
+                break
+            except Exception as e:
+                logger.error("Cross-topic pair processing failed: %s", e)
 
     if not results:
         logger.info("No new articles this cycle.")
         return
 
-    # Cross-topic dedup (same story appearing in multiple topic buckets)
+    # Dedup, sort, cap, send
     results = _dedup_within_cycle(results)
-
-    # Sort by quality (cross-matches first, then global significance)
     results.sort(key=_priority)
-
-    # Enforce global cap
     final = results[:RATE_LIMITS["max_per_run"]]
 
-    # Send each article, store details for elaborate feature
     sent_count = 0
     for result in final:
         msg_id = sender.send_article(result)
         if msg_id:
             sent_count += 1
 
-            # Store article details so "elaborate" button can retrieve context later
             if result.get("is_cross"):
                 uhash = sender.url_hash(result["left_url"])
                 database.save_article_details(
@@ -180,12 +244,7 @@ async def run_cycle():
 async def poll_callbacks():
     """
     Background task: handle button clicks and user replies every 30 seconds.
-
-    Handles:
-    - 👍 like:      record feedback, nudge topic weight up
-    - 👎 dislike:   record feedback, nudge weight down, ask WHY via ForceReply
-    - 🔍 elaborate: look up article details, ask for user's question via ForceReply
-    - Reply:        answer the user's question (elaborate) or save explanation (dislike)
+    Also handles /stats command.
     """
     while True:
         await asyncio.sleep(30)
@@ -204,6 +263,8 @@ async def poll_callbacks():
                     await _handle_callback(cb)
                 elif msg and msg.get("reply_to_message"):
                     await _handle_reply(msg)
+                elif msg and msg.get("text", "").strip().lower().startswith("/stats"):
+                    await _handle_stats()
 
         except Exception as e:
             logger.error("poll_callbacks error: %s", e)
@@ -214,25 +275,22 @@ async def _handle_callback(cb: dict):
     data  = cb.get("data", "")
     cb_id = cb.get("id", "")
     parts = data.split(":")
-
     action = parts[0] if parts else ""
 
     if action == "like" and len(parts) >= 2:
-        topic = parts[1]
+        topic   = parts[1]
         database.record_feedback(topic, "like")
         current = database.get_topic_weight(topic)
         database.set_topic_weight(topic, current + 0.2)
-        logger.info("👍 Feedback: like on topic '%s'", topic)
+        logger.info("👍 Feedback: like on topic '%s' (new weight %.1f)", topic, current + 0.2)
         sender.answer_callback(cb_id, "תודה! 👍")
 
     elif action == "dislike" and len(parts) >= 3:
-        topic    = parts[1]
-        uhash    = parts[2]
+        topic = parts[1]
+        uhash = parts[2]
         database.record_feedback(topic, "dislike")
-        # Small weight reduction — only significant after repeated dislikes
         current = database.get_topic_weight(topic)
         database.set_topic_weight(topic, current - 0.1)
-        # Ask WHY — don't just reduce weight blindly, get specific feedback
         msg_id = sender.send_message(
             "👎 <b>מה לא אהבת בכתבה הזו?</b>\n\n"
             "תאר בקצרה: נושא, זווית, סגנון, אורך... "
@@ -241,14 +299,14 @@ async def _handle_callback(cb: dict):
         )
         if msg_id:
             database.save_pending_interaction(msg_id, "feedback", topic=topic)
-        logger.info("👎 Feedback: dislike on topic '%s'", topic)
+        logger.info("👎 Feedback: dislike on topic '%s' (new weight %.1f)", topic, current - 0.1)
         sender.answer_callback(cb_id, "תודה! ספר לי למה 👇")
 
     elif action == "elaborate" and len(parts) >= 2:
         uhash   = parts[1]
         details = database.get_article_details(uhash)
         if details:
-            title = details["title"]
+            title  = details["title"]
             msg_id = sender.send_message(
                 f"🔍 <b>{sender._html_escape(title)}</b>\n\n"
                 "שאל אותי כל שאלה על הכתבה הזו:\n"
@@ -279,12 +337,9 @@ async def _handle_reply(msg: dict):
     itype = interaction["interaction_type"]
 
     if itype == "feedback":
-        # Save the user's explanation alongside the feedback record
         topic = interaction.get("topic", "unknown")
         database.record_feedback(topic, "dislike_comment", comment=user_text)
-        sender.send_message(
-            "תודה על הפירוט! 🙏 נשתמש בזה כדי לשפר את הסינון.",
-        )
+        sender.send_message("תודה על הפירוט! 🙏 נשתמש בזה כדי לשפר את הסינון.")
         logger.info("Feedback comment saved for topic '%s': %s", topic, user_text[:80])
 
     elif itype == "elaborate":
@@ -309,11 +364,35 @@ async def _handle_reply(msg: dict):
     database.delete_pending_interaction(reply_to_id)
 
 
+async def _handle_stats():
+    """
+    Handle /stats command: query feedback DB, send to Gemini, post Hebrew summary.
+    """
+    logger.info("/stats command received")
+    sender.send_message("📊 <b>מנתח משוב...</b> רגע אחד.")
+
+    comments      = database.get_dislike_comments(limit=30)
+    topic_stats   = database.get_topic_stats(days=7)
+    comment_texts = [c["comment"] for c in comments if c.get("comment")]
+
+    analysis = processor.analyze_feedback(comment_texts, topic_stats)
+
+    header_lines = ["📊 <b>סטטיסטיקות 7 ימים אחרונים:</b>"]
+    for s in topic_stats:
+        bar = f"👍{s['likes']} 👎{s['dislikes']}"
+        header_lines.append(f"  • <b>{s['topic']}</b>: {s['sent']} ידיעות | {bar}")
+
+    header = "\n".join(header_lines)
+    body   = sender._html_escape(analysis)
+    sender.send_message(f"{header}\n\n🤖 <b>ניתוח AI:</b>\n{body}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 async def main():
     database.init_db()
     database.cleanup_old_article_details(days=7)
+    database.cleanup_old_pending_interactions(hours=48)
 
     run_once = "--once" in sys.argv
 
@@ -330,7 +409,6 @@ async def main():
         SCHEDULE["active_hour_end"],
     )
 
-    # Run news cycle + feedback polling concurrently
     await asyncio.gather(
         _cycle_loop(interval),
         poll_callbacks(),

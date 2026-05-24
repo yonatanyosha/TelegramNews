@@ -3,6 +3,7 @@ SQLite persistence layer.
 Tracks sent articles, topic weights, feedback, and interactive state.
 """
 
+import json
 import sqlite3
 import logging
 from datetime import datetime, timedelta
@@ -232,4 +233,106 @@ def set_last_update_id(update_id: int):
             "INSERT INTO bot_state (key, value) VALUES ('last_update_id', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (str(update_id),),
+        )
+
+
+# ── Telethon URL cache ────────────────────────────────────────────────────────
+
+def get_telethon_cache() -> dict | None:
+    """
+    Return cached group-scan URL set if it exists and is fresh.
+    Returns: {"urls": set[str], "age_minutes": float} or None if missing/stale.
+    """
+    from config import RATE_LIMITS
+    with get_conn() as conn:
+        urls_row = conn.execute(
+            "SELECT value FROM bot_state WHERE key = 'telethon_cache_urls'"
+        ).fetchone()
+        time_row = conn.execute(
+            "SELECT value FROM bot_state WHERE key = 'telethon_cache_time'"
+        ).fetchone()
+    if not urls_row or not time_row:
+        return None
+    cache_time = datetime.fromisoformat(time_row["value"])
+    age_minutes = (datetime.utcnow() - cache_time).total_seconds() / 60
+    if age_minutes > RATE_LIMITS.get("telethon_cache_minutes", 60):
+        return None   # stale — caller should rescan
+    return {
+        "urls":        set(json.loads(urls_row["value"])),
+        "age_minutes": round(age_minutes, 1),
+    }
+
+
+def set_telethon_cache(urls: set[str]):
+    """Persist the group-scan URL set with the current timestamp."""
+    urls_json = json.dumps(list(urls))
+    now = datetime.utcnow().isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO bot_state (key, value) VALUES ('telethon_cache_urls', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (urls_json,),
+        )
+        conn.execute(
+            "INSERT INTO bot_state (key, value) VALUES ('telethon_cache_time', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (now,),
+        )
+
+
+# ── Feedback analytics ────────────────────────────────────────────────────────
+
+def get_dislike_comments(limit: int = 30) -> list[dict]:
+    """Return the most recent dislike comments for /stats analysis."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT topic, comment, created_at FROM feedback "
+            "WHERE action = 'dislike_comment' AND comment IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_topic_stats(days: int = 7) -> list[dict]:
+    """Return per-topic like/dislike counts and article send counts for the past N days."""
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    with get_conn() as conn:
+        # Article send counts per topic
+        sent_rows = conn.execute(
+            "SELECT topic, COUNT(*) as sent FROM sent_articles "
+            "WHERE sent_at > ? GROUP BY topic ORDER BY sent DESC",
+            (cutoff,),
+        ).fetchall()
+        # Like/dislike counts per topic
+        feedback_rows = conn.execute(
+            "SELECT topic, action, COUNT(*) as cnt FROM feedback "
+            "WHERE created_at > ? AND action IN ('like','dislike') "
+            "GROUP BY topic, action",
+            (cutoff,),
+        ).fetchall()
+
+    # Build per-topic dict
+    stats: dict[str, dict] = {}
+    for r in sent_rows:
+        stats[r["topic"]] = {"sent": r["sent"], "likes": 0, "dislikes": 0}
+    for r in feedback_rows:
+        if r["topic"] not in stats:
+            stats[r["topic"]] = {"sent": 0, "likes": 0, "dislikes": 0}
+        if r["action"] == "like":
+            stats[r["topic"]]["likes"] = r["cnt"]
+        else:
+            stats[r["topic"]]["dislikes"] = r["cnt"]
+
+    return [{"topic": k, **v} for k, v in stats.items()]
+
+
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+
+def cleanup_old_pending_interactions(hours: int = 48):
+    """Remove stale pending interactions (ForceReply prompts the user never answered)."""
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM pending_interactions WHERE created_at < ?", (cutoff,)
         )

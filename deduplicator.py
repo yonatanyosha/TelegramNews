@@ -119,3 +119,48 @@ def cross_match(articles: list[dict]) -> tuple[list[tuple], list[dict]]:
     ]
 
     return pairs, singles
+
+
+# ── Cross-topic cross-matching ─────────────────────────────────────────────────
+
+def cross_match_topics(
+    singles_by_topic: dict[str, list[dict]],
+    topic_pairs: list[tuple[str, str]],
+) -> list[tuple[dict, dict]]:
+    """
+    Find cross-match pairs across topic boundaries.
+
+    For each configured (topic_a, topic_b) pair in CROSS_TOPIC_PAIRS,
+    try to match unmatched singles from topic_a against singles from topic_b.
+    This catches e.g. BBC (geopolitics) vs Arutz Sheva (israel) covering
+    the same Gaza story, which the per-topic pass would miss entirely.
+
+    Returns a flat list of (left_article, right_article) tuples.
+    Each article is consumed at most once across all pairs.
+    """
+    all_pairs: list[tuple[dict, dict]] = []
+    # Track which articles have been paired (by url) to avoid double-use
+    used_urls: set[str] = set()
+
+    for topic_a, topic_b in topic_pairs:
+        pool_a = [a for a in singles_by_topic.get(topic_a, []) if a["url"] not in used_urls]
+        pool_b = [a for a in singles_by_topic.get(topic_b, []) if a["url"] not in used_urls]
+
+        if not pool_a or not pool_b:
+            continue
+
+        # Re-run cross_match on the combined pool (it handles left/right split internally)
+        combined = pool_a + pool_b
+        pairs, _ = cross_match(combined)
+
+        for left, right in pairs:
+            if left["url"] not in used_urls and right["url"] not in used_urls:
+                all_pairs.append((left, right))
+                used_urls.add(left["url"])
+                used_urls.add(right["url"])
+                logger.info(
+                    "CROSS-TOPIC MATCH (%s↔%s): %s | %s",
+                    topic_a, topic_b, left["source_name"], right["source_name"],
+                )
+
+    return all_pairs
