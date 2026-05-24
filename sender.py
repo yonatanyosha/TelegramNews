@@ -127,11 +127,11 @@ def format_single(article: dict) -> str:
     bias_note    = article.get("bias_note")
     bias_line    = f"\n⚠️ <i>הטיה: {_html_escape(bias_note)}</i>" if bias_note else ""
 
-    title   = _html_escape(article.get("title", ""))
-    summary = _html_escape(article.get("summary_he", ""))
-    url     = article.get("url", "")
-    source  = _html_escape(article.get("source_name", ""))
-    date_line = f"  •  🕐 {date_str}" if date_str else ""
+    title     = _html_escape(article.get("title", ""))
+    summary   = _html_escape(article.get("summary_he", ""))
+    url       = article.get("url", "").replace("&", "&amp;")  # escape & in href
+    source    = _html_escape(article.get("source_name", ""))
+    date_line = f"🕐 {date_str}\n" if date_str else ""         # own line, before source
 
     return (
         f"{positive_hdr}"
@@ -139,7 +139,7 @@ def format_single(article: dict) -> str:
         f"<b>{title}</b>\n\n"
         f"📝 {summary}"
         f"{bias_line}\n\n"
-        f"📰 {source}{date_line}  •  <a href=\"{url}\">קרא עוד</a>"
+        f"{date_line}📰 {source}  •  <a href=\"{url}\">קרא עוד</a>"
     )
 
 
@@ -156,9 +156,11 @@ def format_cross(result: dict) -> str:
     left_sum    = _html_escape(result.get("left_summary", ""))
     right_sum   = _html_escape(result.get("right_summary", ""))
     common      = _html_escape(result.get("common", ""))
-    left_url    = result.get("left_url", "")
-    right_url   = result.get("right_url", "")
-    date_line   = f"  •  🕐 {date_str}" if date_str else ""
+    left_url    = result.get("left_url", "").replace("&", "&amp;")
+    right_url   = result.get("right_url", "").replace("&", "&amp;")
+    diff        = _html_escape(result.get("key_difference", ""))
+    diff_line   = f"⚔️ <b>הבדל מרכזי:</b> {diff}\n" if diff else ""
+    date_line   = f"🕐 {date_str}\n" if date_str else ""       # own line, before sources
 
     return (
         f"{positive_hdr}"
@@ -166,8 +168,9 @@ def format_cross(result: dict) -> str:
         f"<b>{story_title}</b>\n\n"
         f"⬅️ <b>{left_src}:</b>\n{left_sum}\n\n"
         f"➡️ <b>{right_src}:</b>\n{right_sum}\n\n"
-        f"🤝 <b>מסקנה משותפת:</b> {common}\n\n"
-        f"📰 <a href=\"{left_url}\">{left_src}</a>  •  <a href=\"{right_url}\">{right_src}</a>{date_line}"
+        f"{diff_line}"
+        f"🤝 <b>מסכימים על:</b> {common}\n\n"
+        f"{date_line}📰 <a href=\"{left_url}\">{left_src}</a>  •  <a href=\"{right_url}\">{right_src}</a>"
     )
 
 

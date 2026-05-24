@@ -9,8 +9,9 @@ import os
 import re
 import time
 import warnings
-# Suppress google-generativeai deprecation warning (library still works; migrate to google-genai later)
-warnings.filterwarnings("ignore", category=FutureWarning, module="google")
+# Suppress google-generativeai deprecation warning
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*google.*generativeai.*")
 import google.generativeai as genai
 from dotenv import load_dotenv
 from config import GEMINI_MODEL
@@ -175,16 +176,20 @@ _CROSS_PROMPT = """
 החזר JSON בדיוק במבנה הבא (ללא הסברים נוספים):
 {{
   "story_title": "כותרת ניטרלית לסיפור בעברית",
-  "left_summary": "3 משפטים בעברית — מה {left_source} מדגיש ולמה זה חשוב",
-  "right_summary": "3 משפטים בעברית — מה {right_source} מדגיש ולמה זה חשוב",
-  "common": "משפט אחד בעברית — מה שניהם מסכימים עליו",
+  "left_summary": "3 משפטים בעברית — מה {left_source} מדגיש, איזו זווית הוא בוחר ולמה זה חשוב מנקודת מבטו",
+  "right_summary": "3 משפטים בעברית — מה {right_source} מדגיש, איזו זווית הוא בוחר ולמה זה חשוב מנקודת מבטו",
+  "key_difference": "משפט אחד בעברית — ההבדל המהותי ביותר: מה שאחד מדגיש והשני מתעלם ממנו, או כיצד הם מפרשים אחרת את אותה עובדה",
+  "common": "משפט אחד בעברית — העובדה או המסקנה היחידה שעליה שניהם מסכימים",
   "sentiment": "POSITIVE or NEGATIVE or NEUTRAL",
   "is_positive": true or false,
   "countries": ["קודי ISO שתי אותיות של המדינות הקשורות לסיפור"]
 }}
 
-כתוב בעברית תקנית. אל תוסיף שיפוט אישי.
-IMPORTANT: Do not use double-quote characters inside Hebrew text — use ׳ or avoid abbreviations.
+כללים:
+- left_summary ו-right_summary חייבים להציג זוויות שונות, לא אותו מידע בניסוח שונה
+- key_difference: חדד את הפער האמיתי — ויכוח עובדתי, פרשני, או ערכי
+- כתוב בעברית תקנית. אל תוסיף שיפוט אישי.
+- IMPORTANT: Do not use double-quote characters inside Hebrew text — use ׳ or avoid abbreviations.
 """.strip()
 
 
@@ -210,20 +215,21 @@ def process_cross_match(pair: tuple[dict, dict]) -> dict | None:
             return None
 
         return {
-            "topic":         left["topic"],
-            "is_cross":      True,
-            "story_title":   data.get("story_title", left["title"]),
-            "left_source":   left["source_name"],
-            "right_source":  right["source_name"],
-            "left_url":      left["url"],
-            "right_url":     right["url"],
-            "left_summary":  data.get("left_summary", ""),
-            "right_summary": data.get("right_summary", ""),
-            "common":        data.get("common", ""),
-            "sentiment":     data.get("sentiment", "NEUTRAL"),
-            "is_positive":   bool(data.get("is_positive", False)),
-            "countries":     data.get("countries") or [],
-            "published":     left["published"],
+            "topic":          left["topic"],
+            "is_cross":       True,
+            "story_title":    data.get("story_title", left["title"]),
+            "left_source":    left["source_name"],
+            "right_source":   right["source_name"],
+            "left_url":       left["url"],
+            "right_url":      right["url"],
+            "left_summary":   data.get("left_summary", ""),
+            "right_summary":  data.get("right_summary", ""),
+            "key_difference": data.get("key_difference", ""),   # NEW: the core disagreement
+            "common":         data.get("common", ""),
+            "sentiment":      data.get("sentiment", "NEUTRAL"),
+            "is_positive":    bool(data.get("is_positive", False)),
+            "countries":      data.get("countries") or [],
+            "published":      left["published"],
         }
     except Exception as e:
         logger.error("process_cross_match failed: %s", e)
