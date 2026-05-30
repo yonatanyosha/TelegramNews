@@ -184,7 +184,7 @@ def _is_empty_summary(summary: str) -> bool:
 # ── Single-source processing ──────────────────────────────────────────────────
 
 _SINGLE_PROMPT = """
-אתה עוזר עיתונאי ניטרלי שמסכם ידיעות לעברית.
+אתה עיתונאי שכותב תקצירי חדשות חדים לעברית.
 
 להלן ידיעה מהמקור "{source_name}":
 כותרת: {title}
@@ -192,7 +192,7 @@ _SINGLE_PROMPT = """
 
 החזר JSON בדיוק במבנה הבא (ללא הסברים נוספים):
 {{
-  "summary": "5-6 משפטים בעברית — תקציר עובדתי הכולל רקע חשוב, עובדות מרכזיות, והשלכות. כתוב כאילו הקורא לא מכיר את הנושא. אם אין תוכן עיתונאי מעבר לכותרת, החזר בדיוק EMPTY",
+  "summary": "3-4 משפטים בעברית — פתח ישר בעיקר: מה קרה, מי מעורב, מספרים ונתונים קשים. סיים בהשפעה הישירה. אל תסביר רקע ידוע. אם אין תוכן עיתונאי מעבר לכותרת, החזר בדיוק EMPTY",
   "bias_note": "הסבר קצר בעברית (משפט אחד) אם יש הטיה בכתיבה, null אם אין",
   "sentiment": "POSITIVE or NEGATIVE or NEUTRAL",
   "is_positive": true or false,
@@ -201,6 +201,9 @@ _SINGLE_PROMPT = """
 }}
 
 כללים:
+- הקורא מעודכן — אל תסביר מושגים כלליים או רקע ידוע
+- העדף נתונים קשים: מספרים, אחוזים, שמות, תאריכים — על פני הצהרות מעורפלות
+- אין פתיחות כמו "ידיעה זו עוסקת ב..." או "בהמשך לאירועים האחרונים..."
 - כתוב בעברית תקנית ובהירה, ללא דעה אישית
 - sentiment=POSITIVE רק אם הידיעה עוסקת בהישג, שיפור, או חדשות טובות
 - countries: קודים כמו "IL", "US", "IR", "UA", "RU", "CN", "IN"
@@ -249,7 +252,7 @@ def process_single(article: dict) -> dict | None:
 # ── Cross-match processing ────────────────────────────────────────────────────
 
 _CROSS_PROMPT = """
-אתה עורך עיתון ניטרלי שמציג שני צידי הסיפור.
+אתה עורך עיתון ניטרלי שמציג שני צידי הסיפור — אבל רק כשיש באמת שני צדדים.
 
 המקור השמאלי/מרכזי "{left_source}" מדווח:
 כותרת: {left_title}
@@ -262,9 +265,10 @@ _CROSS_PROMPT = """
 החזר JSON בדיוק במבנה הבא (ללא הסברים נוספים):
 {{
   "story_title": "כותרת ניטרלית לסיפור בעברית",
-  "left_summary": "3 משפטים בעברית — מה {left_source} מדגיש, איזו זווית הוא בוחר ולמה זה חשוב מנקודת מבטו",
-  "right_summary": "3 משפטים בעברית — מה {right_source} מדגיש, איזו זווית הוא בוחר ולמה זה חשוב מנקודת מבטו",
-  "key_difference": "משפט אחד בעברית — ההבדל המהותי ביותר: מה שאחד מדגיש והשני מתעלם ממנו, או כיצד הם מפרשים אחרת את אותה עובדה",
+  "left_summary": "2-3 משפטים בעברית — הידיעה של {left_source}: מה, מי, כמה, מתי. מה הם מדגישים שהצד השני לא",
+  "right_summary": "2-3 משפטים בעברית — הידיעה של {right_source}: מה, מי, כמה, מתי. מה הם מדגישים שהצד השני לא",
+  "key_difference": "משפט אחד בעברית — רק אם יש הבדל מהותי: עובדה סותרת, מסקנה הפוכה, או נרטיב מנוגד. אם ההבדל הוא רק סגנון או דגש קל — כתוב null",
+  "has_real_difference": "true אם יש הבדל עובדתי, פרשני, או ערכי מהותי שמשנה את תמונת המציאות. false אם שניהם מסכימים על העובדות המרכזיות גם אם הדגש שונה",
   "common": "משפט אחד בעברית — העובדה או המסקנה היחידה שעליה שניהם מסכימים",
   "sentiment": "POSITIVE or NEGATIVE or NEUTRAL",
   "is_positive": true or false,
@@ -272,8 +276,9 @@ _CROSS_PROMPT = """
 }}
 
 כללים:
-- left_summary ו-right_summary חייבים להציג זוויות שונות, לא אותו מידע בניסוח שונה
-- key_difference: חדד את הפער האמיתי — ויכוח עובדתי, פרשני, או ערכי
+- left_summary ו-right_summary: התמקד בעובדות ובנתונים, לא בניסוח זוויות
+- key_difference: רק הבדל מהותי שמשנה את הסיפור — לא הבדל בסגנון, בסדר, או בדגש קל
+- has_real_difference=false אם שני המקורות מסכימים על העובדות המרכזיות גם אם הדגש שונה
 - כתוב בעברית תקנית. אל תוסיף שיפוט אישי.
 - IMPORTANT: Do not use double-quote characters inside Hebrew text — use ׳ or avoid abbreviations.
 """.strip()
@@ -300,6 +305,15 @@ def process_cross_match(pair: tuple[dict, dict]) -> dict | None:
         if not data.get("left_summary"):
             logger.warning("Empty cross-match response for: %s", left["title"][:60])
             return None
+
+        # If the model found no real substantive difference, send as a regular single
+        # (avoids publishing manufactured "differences" that are just framing)
+        if not data.get("has_real_difference", True):
+            logger.info(
+                "Cross-match downgraded — no real difference found: %s",
+                left["title"][:60],
+            )
+            return process_single(left)
 
         return {
             "topic":          left["topic"],
