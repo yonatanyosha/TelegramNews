@@ -1,3 +1,3 @@
 @echo off
-cd /d "C:\Users\user2\yoshanews-bot"
-pythonw main.py >> logs\bot.log 2>&1
+cd /d "D:\TelegramNews"
+"D:\Dev\Python\Python314\pythonw.exe" main.py >> logs\bot.log 2>&1
